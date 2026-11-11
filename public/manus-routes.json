@@ -1,0 +1,9 @@
+{
+  "routes": [
+    { "path": "/", "title": "ذاكرة بيت حانون | Memory of Beit Hanoun" },
+    { "path": "/archive", "title": "سجل الشهداء | Martyrs Archive" },
+    { "path": "/archive/:id", "title": "سجل شهيد | Martyr Record" },
+    { "path": "/about", "title": "عن بيت حانون | About Beit Hanoun" },
+    { "path": "/suggest", "title": "المساهمة | Contribute" }
+  ]
+}
