@@ -1,5 +1,6 @@
--- Enable admin approval for photos submitted for an existing martyr.
--- Additive migration: does not delete or rewrite existing martyr/photo records.
+-- Allow admins to approve additional photos for a martyr who already has photos.
+-- Existing martyr_photos rows and martyrs.image_url are preserved.
+-- Run once in Supabase SQL Editor as the project owner.
 
 create or replace function public.admin_approve_photo_contribution(
   p_contribution_id bigint,
@@ -19,14 +20,13 @@ begin
     raise exception 'Not authorized';
   end if;
 
-  if p_image_path is null or p_image_path not like 'archive/%' then
-    raise exception 'Invalid approved image path';
-  end if;
-  if p_image_url is null or length(trim(p_image_url)) = 0 then
-    raise exception 'Approved image URL is required';
+  if coalesce(trim(p_image_path), '') = ''
+     or coalesce(trim(p_image_url), '') = '' then
+    raise exception 'Approved image path and URL are required';
   end if;
 
-  select * into contribution
+  select *
+    into contribution
   from public.photo_contributions
   where id = p_contribution_id
   for update;
@@ -34,27 +34,36 @@ begin
   if not found then
     raise exception 'Photo contribution not found';
   end if;
+
   if contribution.status <> 'pending' then
     raise exception 'Photo contribution is not pending';
   end if;
 
-  select * into target_martyr
+  if p_image_path not like ('archive/' || contribution.martyr_id::text || '/%') then
+    raise exception 'Approved image path does not match the martyr record';
+  end if;
+
+  select *
+    into target_martyr
   from public.martyrs
   where id = contribution.martyr_id
   for update;
 
   if not found then
-    raise exception 'Target martyr not found';
-  end if;
-  if nullif(trim(coalesce(target_martyr.image_url, '')), '') is not null then
-    raise exception 'This martyr already has an image; automatic replacement is blocked';
+    raise exception 'Linked martyr record not found';
   end if;
 
+  -- Every approved submission gets its own row. Do not replace existing photos.
   insert into public.martyr_photos (martyr_id, image_path, created_at)
   values (contribution.martyr_id, p_image_path, now());
 
+  -- Keep the original cover image. Set image_url only when it is currently empty,
+  -- so older parts of the site that still read martyrs.image_url keep working.
   update public.martyrs
-  set image_url = p_image_url,
+  set image_url = case
+        when coalesce(trim(image_url), '') = '' then p_image_url
+        else image_url
+      end,
       updated_at = now()
   where id = contribution.martyr_id;
 
@@ -71,10 +80,19 @@ revoke all on function public.admin_approve_photo_contribution(bigint, text, tex
 grant execute on function public.admin_approve_photo_contribution(bigint, text, text)
   to authenticated;
 
--- Allow an authenticated site admin to remove an uploaded archive copy if the
--- database approval RPC fails after the file upload. Existing public read access is unchanged.
-drop policy if exists "Admins can delete archive martyr photos" on storage.objects;
-create policy "Admins can delete archive martyr photos"
+-- Allow admins to remove the quarantine copy after a successful approval.
+drop policy if exists "Admins can delete pending martyr photos" on storage.objects;
+create policy "Admins can delete pending martyr photos"
+  on storage.objects for delete to authenticated
+  using (
+    bucket_id = 'pending-martyr-photos'
+    and (select public.is_site_admin())
+  );
+
+-- Allow an administrator to clean up a newly uploaded approved copy if the
+-- database approval transaction fails after the Storage upload.
+drop policy if exists "Admins can delete approved martyr photos" on storage.objects;
+create policy "Admins can delete approved martyr photos"
   on storage.objects for delete to authenticated
   using (
     bucket_id = 'martyr-photos'
