@@ -201,9 +201,6 @@ function AdminDashboard() {
       } else {
         const contribution = photos.find((item) => item.id === id);
         if (!contribution) throw new Error("لم يتم العثور على مساهمة الصورة.");
-        if (contribution.currentImageUrl) {
-          throw new Error("هذا الشهيد لديه صورة مرتبطة بالفعل. راجعي السجل قبل استبدال أي صورة.");
-        }
         if (!contribution.previewUrl) {
           throw new Error("تعذرت معاينة الصورة المعلّقة؛ لم يتم اعتمادها.");
         }
@@ -415,7 +412,7 @@ function AdminDashboard() {
                   </h2>
                   {item.currentImageUrl && (
                     <p className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
-                      يوجد بالفعل رابط صورة في سجل هذا الشهيد؛ لن نسمح باستبداله تلقائيًا.
+                      هذا الشهيد لديه صورة معتمدة بالفعل. قبول الصورة الجديدة سيضيفها كصورة إضافية ولن يحذف الصورة الحالية.
                     </p>
                   )}
                   {item.notes && <p className="mt-2 text-sm">{item.notes}</p>}
@@ -435,13 +432,13 @@ function AdminDashboard() {
                     </div>
                     <p className="max-w-xl text-sm text-muted-foreground">
                       راجعي هوية الشهيد والصورة قبل الاعتماد. عند القبول ستُنقل الصورة إلى التخزين
-                      المعتمد وتُربط بسجل الشهيد.
+المعتمد وتُضاف إلى صور الشهيد دون استبدال صوره السابقة.
                     </p>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
                       onClick={() => void decide("photo", item.id, "approve")}
-                      disabled={busy || Boolean(item.currentImageUrl) || !item.previewUrl}
+                      disabled={busy || !item.previewUrl}
                       className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 font-bold text-brand-foreground disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Check size={16} /> قبول وربط الصورة
