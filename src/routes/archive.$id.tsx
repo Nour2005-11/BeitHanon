@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { ArrowRight, CalendarDays, Tag } from "lucide-react";
+import { ArrowRight, CalendarDays, ImagePlus, Tag } from "lucide-react";
 import type { ReactNode } from "react";
 import { MartyrPhoto } from "@/components/MartyrPhoto";
 import { getMartyrById, hasArchiveConnection } from "@/data/martyrRepository";
@@ -135,6 +135,16 @@ function MartyrDetails() {
               {t.archiveReference}: {martyr.legacyReference || martyr.id}
             </span>
           </div>
+          {!martyr.imageUrl ? (
+            <Link
+              to="/suggest"
+              search={{ martyrId: String(martyr.id) }}
+              className="mt-5 inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-3 font-bold text-brand-foreground transition hover:opacity-90"
+            >
+              <ImagePlus className="h-5 w-5" aria-hidden="true" />
+              إضافة صورة لهذا الشهيد
+            </Link>
+          ) : null}
         </div>
       </article>
     </section>

@@ -29,8 +29,10 @@ type PhotoContribution = {
   status: string;
   created_at: string;
   previewUrl: string | null;
+  martyrName: string;
+  currentImageUrl: string | null;
 };
-type PhotoContributionRow = Omit<PhotoContribution, "previewUrl">;
+type PhotoContributionRow = Omit<PhotoContribution, "previewUrl" | "martyrName" | "currentImageUrl">;
 
 async function createPendingPhotoPreview(client: SupabaseClientInstance, path: string) {
   try {
@@ -91,6 +93,21 @@ function AdminDashboard() {
     else {
       const martyrRows = (m.data ?? []) as MartyrContributionRow[];
       const photoRows = (p.data ?? []) as PhotoContributionRow[];
+      const martyrIds = [...new Set(photoRows.map((item) => item.martyr_id))];
+      const { data: linkedMartyrs, error: linkedMartyrsError } = martyrIds.length
+        ? await supabase.from("martyrs").select("id,name_ar,image_url").in("id", martyrIds)
+        : { data: [], error: null };
+      if (linkedMartyrsError) {
+        setNotice(`تعذر تحميل بيانات الشهداء المرتبطين بالصور: ${linkedMartyrsError.message}`);
+        setBusy(false);
+        return;
+      }
+      const martyrById = new Map(
+        (linkedMartyrs ?? []).map((item) => [
+          Number(item.id),
+          { name: item.name_ar as string, imageUrl: (item.image_url as string | null) ?? null },
+        ]),
+      );
       const [martyrQueue, photoQueue] = await Promise.all([
         Promise.all(
           martyrRows.map(async (item) => ({
@@ -101,10 +118,15 @@ function AdminDashboard() {
           })),
         ),
         Promise.all(
-          photoRows.map(async (item) => ({
-            ...item,
-            previewUrl: await createPendingPhotoPreview(supabase, item.photo_path),
-          })),
+          photoRows.map(async (item) => {
+            const linked = martyrById.get(item.martyr_id);
+            return {
+              ...item,
+              martyrName: linked?.name ?? "سجل شهيد غير موجود",
+              currentImageUrl: linked?.imageUrl ?? null,
+              previewUrl: await createPendingPhotoPreview(supabase, item.photo_path),
+            };
+          }),
         ),
       ]);
       setMartyrs(martyrQueue);
@@ -139,6 +161,7 @@ function AdminDashboard() {
     if (!window.confirm(message)) return;
     setBusy(true);
     setNotice("");
+    let successMessage = "";
     try {
       if (action === "reject") {
         const { error } = await client.rpc("admin_reject_contribution", {
@@ -146,7 +169,7 @@ function AdminDashboard() {
           p_contribution_id: id,
         });
         if (error) throw error;
-        setNotice("تم رفض المساهمة.");
+        successMessage = "تم رفض المساهمة.";
       } else if (kind === "martyr") {
         const contribution = martyrs.find((item) => item.id === id);
         if (!contribution) throw new Error("لم يتم العثور على المساهمة.");
@@ -174,13 +197,50 @@ function AdminDashboard() {
           p_image_url: publicUrl,
         });
         if (error) throw error;
-        setNotice("تمت إضافة الشهيد إلى الأرشيف واعتماد المساهمة.");
+        successMessage = "تمت إضافة الشهيد إلى الأرشيف واعتماد المساهمة.";
       } else {
-        throw new Error(
-          "اعتماد مساهمات الصور للشهداء الموجودين يحتاج إعدادًا منفصلًا؛ لم يتم تغيير هذه المساهمة.",
-        );
+        const contribution = photos.find((item) => item.id === id);
+        if (!contribution) throw new Error("لم يتم العثور على مساهمة الصورة.");
+        if (contribution.currentImageUrl) {
+          throw new Error("هذا الشهيد لديه صورة مرتبطة بالفعل. راجعي السجل قبل استبدال أي صورة.");
+        }
+        if (!contribution.previewUrl) {
+          throw new Error("تعذرت معاينة الصورة المعلّقة؛ لم يتم اعتمادها.");
+        }
+
+        const { data: pendingImage, error: downloadError } = await client.storage
+          .from("pending-martyr-photos")
+          .download(contribution.photo_path);
+        if (downloadError || !pendingImage) {
+          throw downloadError ?? new Error("تعذر تنزيل الصورة المعلّقة.");
+        }
+
+        const ext =
+          contribution.photo_path.split(".").pop()?.replace(/[^a-z0-9]/gi, "") || "jpg";
+        const approvedPath = `archive/${contribution.martyr_id}/${crypto.randomUUID()}.${ext}`;
+        const { error: uploadError } = await client.storage
+          .from("martyr-photos")
+          .upload(approvedPath, pendingImage, {
+            contentType: pendingImage.type || "image/jpeg",
+            upsert: false,
+          });
+        if (uploadError) throw uploadError;
+
+        const publicUrl = client.storage.from("martyr-photos").getPublicUrl(approvedPath).data
+          .publicUrl;
+        const { error: approvalError } = await client.rpc("admin_approve_photo_contribution", {
+          p_contribution_id: id,
+          p_image_path: approvedPath,
+          p_image_url: publicUrl,
+        });
+        if (approvalError) {
+          await client.storage.from("martyr-photos").remove([approvedPath]);
+          throw approvalError;
+        }
+        successMessage = `تم اعتماد الصورة وربطها بالشهيد ${contribution.martyrName} (رقم ${contribution.martyr_id}).`;
       }
       await load();
+      setNotice(successMessage);
     } catch (error) {
       setNotice(
         `لم تكتمل العملية: ${error instanceof Error ? error.message : "خطأ غير معروف"}. لم يتم اعتماد المساهمة إذا فشلت العملية.`,
@@ -351,8 +411,13 @@ function AdminDashboard() {
                     مساهمة رقم {item.id} · {new Date(item.created_at).toLocaleString("ar")}
                   </p>
                   <h2 className="mt-2 text-lg font-bold">
-                    اقتراح صورة لسجل الشهيد رقم {item.martyr_id}
+                    {item.martyrName} — رقم الشهيد {item.martyr_id}
                   </h2>
+                  {item.currentImageUrl && (
+                    <p className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+                      يوجد بالفعل رابط صورة في سجل هذا الشهيد؛ لن نسمح باستبداله تلقائيًا.
+                    </p>
+                  )}
                   {item.notes && <p className="mt-2 text-sm">{item.notes}</p>}
                   <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
                     <div className="space-y-2">
@@ -369,17 +434,26 @@ function AdminDashboard() {
                       />
                     </div>
                     <p className="max-w-xl text-sm text-muted-foreground">
-                      اعتماد صور الشهداء الموجودين غير مفعّل بعد؛ يمكنك مراجعة المساهمة هنا دون
-                      تغييرها.
+                      راجعي هوية الشهيد والصورة قبل الاعتماد. عند القبول ستُنقل الصورة إلى التخزين
+                      المعتمد وتُربط بسجل الشهيد.
                     </p>
                   </div>
-                  <button
-                    onClick={() => void decide("photo", item.id, "reject")}
-                    disabled={busy}
-                    className="mt-3 inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2"
-                  >
-                    <X size={16} /> رفض
-                  </button>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => void decide("photo", item.id, "approve")}
+                      disabled={busy || Boolean(item.currentImageUrl) || !item.previewUrl}
+                      className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 font-bold text-brand-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Check size={16} /> قبول وربط الصورة
+                    </button>
+                    <button
+                      onClick={() => void decide("photo", item.id, "reject")}
+                      disabled={busy}
+                      className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2 font-bold disabled:opacity-50"
+                    >
+                      <X size={16} /> رفض
+                    </button>
+                  </div>
                 </article>
               ))}
               {photos.length === 0 && !busy && <EmptyQueue />}
