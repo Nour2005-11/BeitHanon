@@ -1,13 +1,15 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowUpLeft, CalendarDays } from "lucide-react";
+import { ArrowUpLeft, CalendarDays, ImagePlus } from "lucide-react";
 import type { MartyrRecord } from "@/data/martyrTypes";
 import type { Dict } from "@/lib/i18n";
 import { formatMartyrdomDate } from "@/lib/date-format";
+import { usePrefs } from "@/lib/prefs";
 import { MartyrPhoto } from "./MartyrPhoto";
 
 type MartyrCardProps = { record: MartyrRecord; t: Dict };
 
 export function MartyrCard({ record, t }: MartyrCardProps) {
+  const { lang } = usePrefs();
   const date = formatMartyrdomDate(record.martyrdomDate, record.martyrdomDateRaw);
 
   return (
@@ -41,13 +43,26 @@ export function MartyrCard({ record, t }: MartyrCardProps) {
             <CalendarDays className="h-4 w-4" aria-hidden="true" />
             {date ? <span dir="ltr">{date}</span> : <span>{t.dateUnavailable}</span>}
           </p>
-          <Link
-            to="/archive/$id"
-            params={{ id: String(record.id) }}
-            className="mt-4 inline-flex items-center gap-2 text-sm font-bold text-foreground underline decoration-brand/50 decoration-2 underline-offset-4 transition-colors hover:text-brand"
-          >
-            {t.archiveReference} <ArrowUpLeft className="h-4 w-4" aria-hidden="true" />
-          </Link>
+          <div className="mt-4 flex flex-col items-center gap-3">
+            <Link
+              to="/archive/$id"
+              params={{ id: String(record.id) }}
+              className="inline-flex items-center gap-2 text-sm font-bold text-foreground underline decoration-brand/50 decoration-2 underline-offset-4 transition-colors hover:text-brand"
+            >
+              {t.archiveReference} <ArrowUpLeft className="h-4 w-4" aria-hidden="true" />
+            </Link>
+            {!record.imageUrl ? (
+              <Link
+                to="/suggest"
+                search={{ martyrId: String(record.id) }}
+                aria-label={lang === "ar" ? `إضافة صورة للشهيد ${record.arabicName}` : `Add a photo for ${record.arabicName}`}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-brand/40 bg-brand/10 px-4 py-2.5 text-sm font-extrabold text-brand transition-colors hover:bg-brand hover:text-brand-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+              >
+                <ImagePlus className="h-4 w-4 shrink-0" aria-hidden="true" />
+                {lang === "ar" ? "إضافة صورة لهذا الشهيد" : "Add a photo for this martyr"}
+              </Link>
+            ) : null}
+          </div>
         </div>
       </div>
     </article>
